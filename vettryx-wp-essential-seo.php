@@ -3,7 +3,7 @@
  * Plugin Name: VETTRYX WP Essential SEO
  * Plugin URI:  https://github.com/vettryx/vettryx-wp-core
  * Description: Módulo para otimização de SEO On-Page, sitemaps e redirecionamentos. Foco em performance e zero bloatware.
- * Version:     1.0.0
+ * Version:     1.0.1
  * Author:      VETTRYX Tech
  * Author URI:  https://vettryx.com.br
  * License:     Proprietária (Uso Comercial Exclusivo)
@@ -96,30 +96,46 @@ function vettryx_seo_custom_title($title) {
     return $title;
 }
 
-// 1.5 Injeta as tags Description e Open Graph no <head>
+// 1.5 Injeta as tags Description e Open Graph no <head> com Lógica de Automação (Fallback)
 add_action('wp_head', 'vettryx_seo_inject_meta_tags', 1);
 function vettryx_seo_inject_meta_tags() {
     if (is_singular()) {
         global $post;
-        $meta_desc = get_post_meta($post->ID, '_vettryx_meta_description', true);
+        
+        // 1. AUTOMAÇÃO DO TÍTULO: Pega o customizado, senão usa o padrão do post
         $meta_title = get_post_meta($post->ID, '_vettryx_meta_title', true);
         $final_title = !empty($meta_title) ? $meta_title : get_the_title();
 
+        // 2. AUTOMAÇÃO DA DESCRIÇÃO (Cascata)
+        $meta_desc = get_post_meta($post->ID, '_vettryx_meta_description', true);
+        
+        if (empty($meta_desc)) {
+            // Se tiver o "Resumo" nativo do WP preenchido, usa ele
+            if (has_excerpt($post->ID)) {
+                $meta_desc = wp_strip_all_tags(get_the_excerpt($post->ID));
+            } else {
+                // Se não, varre o conteúdo da página, limpa os códigos e pega as primeiras 25 palavras
+                $content = get_post_field('post_content', $post->ID);
+                $content_clean = wp_strip_all_tags(strip_shortcodes($content));
+                $meta_desc = wp_trim_words($content_clean, 25, '...');
+            }
+        }
+
         echo "\n\n";
 
-        // Injeta a Description
+        // Imprime as descriptions geradas pela automação
         if (!empty($meta_desc)) {
             echo '<meta name="description" content="' . esc_attr($meta_desc) . '" />' . "\n";
             echo '<meta property="og:description" content="' . esc_attr($meta_desc) . '" />' . "\n";
         }
 
-        // Injeta Open Graph Básico (para links bonitos no WhatsApp/LinkedIn)
+        // Injeta Open Graph
         echo '<meta property="og:title" content="' . esc_attr($final_title) . '" />' . "\n";
         echo '<meta property="og:type" content="article" />' . "\n";
         echo '<meta property="og:url" content="' . esc_url(get_permalink()) . '" />' . "\n";
         
-        // Puxa a imagem destacada do post, se existir
-        if (has_post_thumbnail()) {
+        // 3. AUTOMAÇÃO DA IMAGEM: Puxa a imagem destacada nativa automaticamente
+        if (has_post_thumbnail($post->ID)) {
             $image_url = get_the_post_thumbnail_url($post->ID, 'large');
             echo '<meta property="og:image" content="' . esc_url($image_url) . '" />' . "\n";
         }

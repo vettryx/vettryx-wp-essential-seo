@@ -3,7 +3,7 @@
  * Plugin Name: VETTRYX WP Essential SEO
  * Plugin URI:  https://github.com/vettryx/vettryx-wp-core
  * Description: Módulo para otimização de SEO On-Page, sitemaps e redirecionamentos. Foco em performance e zero bloatware.
- * Version:     1.1.3
+ * Version:     1.2.0
  * Author:      VETTRYX Tech
  * Author URI:  https://vettryx.com.br
  * License:     Proprietária (Uso Comercial Exclusivo)
@@ -318,6 +318,78 @@ function vettryx_seo_prevent_sitemap_redirect($redirect_url) {
         return false; 
     }
     return $redirect_url;
+}
+
+/**
+ * ==============================================================================
+ * 3. GUARDIÃO DE TRÁFEGO (MONITOR 404 E REDIRECIONAMENTOS 301)
+ * ==============================================================================
+ */
+
+// 3.1 Cria a tabela no banco de dados na ativação do plugin
+register_activation_hook(__FILE__, 'vettryx_seo_create_redirects_table');
+function vettryx_seo_create_redirects_table() {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'vettryx_seo_redirects';
+    $charset_collate = $wpdb->get_charset_collate();
+
+    $sql = "CREATE TABLE $table_name (
+        id mediumint(9) NOT NULL AUTO_INCREMENT,
+        url_origem varchar(255) NOT NULL,
+        url_destino varchar(255) DEFAULT '' NOT NULL,
+        tipo varchar(10) DEFAULT '404' NOT NULL, -- Pode ser '404' ou '301'
+        hits int(11) DEFAULT 0 NOT NULL,
+        ultimo_acesso datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        PRIMARY KEY  (id),
+        UNIQUE KEY url_origem (url_origem)
+    ) $charset_collate;";
+
+    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+    dbDelta($sql);
+}
+
+// 3.2 Intercepta o tráfego (O Guardião)
+add_action('template_redirect', 'vettryx_seo_traffic_guardian', 1);
+function vettryx_seo_traffic_guardian() {
+    // Ignora o painel admin
+    if (is_admin()) return;
+
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'vettryx_seo_redirects';
+    
+    // Pega a URL exata que o usuário tentou acessar (sem o domínio)
+    $requested_url = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+    $requested_url = untrailingslashit($requested_url); // Remove barra final para padronizar
+    
+    // 1. Busca no banco se existe uma regra para essa URL
+    $rule = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE url_origem = %s", $requested_url));
+
+    // 2. Se a URL não existe (Erro 404 real do WordPress)
+    if (is_404()) {
+        if ($rule) {
+            // Se já tem no banco, apenas atualiza o contador de 'hits'
+            $wpdb->query($wpdb->prepare("UPDATE $table_name SET hits = hits + 1, ultimo_acesso = CURRENT_TIMESTAMP WHERE id = %d", $rule->id));
+        } else {
+            // Se é um 404 novo, registra na tabela para o usuário ver no painel depois
+            $wpdb->insert(
+                $table_name,
+                array(
+                    'url_origem' => $requested_url,
+                    'tipo' => '404',
+                    'hits' => 1
+                )
+            );
+        }
+    } 
+    // 3. Se a URL tem uma regra de redirecionamento (301) configurada no banco
+    elseif ($rule && $rule->tipo === '301' && !empty($rule->url_destino)) {
+        // Atualiza o contador de hits do redirecionamento
+        $wpdb->query($wpdb->prepare("UPDATE $table_name SET hits = hits + 1, ultimo_acesso = CURRENT_TIMESTAMP WHERE id = %d", $rule->id));
+        
+        // Executa o redirecionamento permanente
+        wp_redirect(home_url($rule->url_destino), 301);
+        exit;
+    }
 }
 
 /**

@@ -3,7 +3,7 @@
  * Plugin Name: VETTRYX WP Essential SEO
  * Plugin URI:  https://github.com/vettryx/vettryx-wp-core
  * Description: Módulo para otimização de SEO On-Page, sitemaps e redirecionamentos. Foco em performance e zero bloatware.
- * Version:     1.1.2
+ * Version:     1.1.3
  * Author:      VETTRYX Tech
  * Author URI:  https://vettryx.com.br
  * License:     Proprietária (Uso Comercial Exclusivo)
@@ -308,6 +308,16 @@ function vettryx_seo_filter_sitemap_taxonomies($taxonomies) {
     if (isset($config['exclude_tags']) && $config['exclude_tags'] === '1' && isset($taxonomies['post_tag'])) unset($taxonomies['post_tag']); 
     if (isset($config['exclude_categories']) && $config['exclude_categories'] === '1' && isset($taxonomies['category'])) unset($taxonomies['category']); 
     return $taxonomies;
+}
+
+// 2.5 Impede o WordPress de forçar o redirecionamento para o wp-sitemap.xml padrão
+add_filter('redirect_canonical', 'vettryx_seo_prevent_sitemap_redirect');
+function vettryx_seo_prevent_sitemap_redirect($redirect_url) {
+    // Se a página atual for qualquer parte do sitemap, bloqueia o redirecionamento
+    if (get_query_var('sitemap')) {
+        return false; 
+    }
+    return $redirect_url;
 }
 
 /**

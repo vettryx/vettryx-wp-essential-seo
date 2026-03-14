@@ -3,7 +3,7 @@
  * Plugin Name: VETTRYX WP Essential SEO
  * Plugin URI:  https://github.com/vettryx/vettryx-wp-core
  * Description: Módulo para otimização de SEO On-Page, sitemaps e redirecionamentos. Foco em performance e zero bloatware.
- * Version:     1.1.1
+ * Version:     1.1.2
  * Author:      VETTRYX Tech
  * Author URI:  https://vettryx.com.br
  * License:     Proprietária (Uso Comercial Exclusivo)
@@ -151,7 +151,7 @@ function vettryx_seo_inject_meta_tags() {
  * ==============================================================================
  */
 
-// 2.1 Adiciona o submenu "SEO Manager" abaixo de "VETTRYX Tech"
+// 2.1 Adiciona o submenu "SEO Manager"
 add_action('admin_menu', 'vettryx_seo_add_submenu', 99);
 function vettryx_seo_add_submenu() {
     add_submenu_page(
@@ -164,20 +164,17 @@ function vettryx_seo_add_submenu() {
     );
 }
 
-// 2.2 Desenha a interface do SEO Manager (AGORA TOTALMENTE DINÂMICA)
+// 2.2 Desenha a interface do SEO Manager 
 function vettryx_seo_manager_html() {
     if (!current_user_can('manage_options')) return;
 
-    // A MÁGICA DE ENGENHARIA: PHP varre todos os tipos de post públicos e gera a interface sozinho.
-    $args = array('public' => true, '_builtin' => false); // Pega apenas os Custom Post Types (como projects)
+    // Busca os tipos de post
+    $args = array('public' => true, '_builtin' => false); 
     $custom_post_types = get_post_types($args, 'objects');
-    
-    // Lista de tipos de post para a interface
     $interface_types = array(
         'post' => (object) array('labels' => (object) array('name' => 'Artigos (Posts)')),
         'page' => (object) array('labels' => (object) array('name' => 'Páginas (Pages)')),
     );
-    
     foreach ($custom_post_types as $cpt_slug => $cpt_obj) {
         $interface_types[$cpt_slug] = $cpt_obj;
     }
@@ -185,38 +182,39 @@ function vettryx_seo_manager_html() {
     // Processa o salvamento do formulário
     if (isset($_POST['vettryx_seo_save_settings']) && check_admin_referer('vettryx_seo_settings_action', 'vettryx_seo_settings_nonce')) {
         
-        // 1. Coleta e sanitiza a lista de post types a INCLUIR (Lógica de Inclusão)
-        $included_types = array();
-        if (isset($_POST['include_types']) && is_array($_POST['include_types'])) {
-            $included_types = array_map('sanitize_text_field', $_POST['include_types']);
-        }
-        
-        // 2. Coleta e sanitiza a lista de taxonomias a EXCLUIR (Lógica de Exclusão)
+        $included_types = isset($_POST['include_types']) && is_array($_POST['include_types']) ? array_map('sanitize_text_field', $_POST['include_types']) : [];
         $exclude_tags = isset($_POST['exclude_tags']) ? '1' : '0';
         $exclude_categories = isset($_POST['exclude_categories']) ? '1' : '0';
 
-        // 3. Monta e salva o array de configuração completo
+        // Sanitização pesada para a URL do Sitemap (Garante slug amigável e sufixo .xml)
+        $custom_url = isset($_POST['sitemap_custom_url']) ? sanitize_text_field($_POST['sitemap_custom_url']) : 'sitemap_index.xml';
+        if (empty($custom_url)) $custom_url = 'sitemap_index.xml'; // Fallback
+        $custom_url = sanitize_title(str_replace('.xml', '', $custom_url)) . '.xml';
+
         $config = [
-            'included_post_types' => $included_types, // Nova chave de inclusão inteligente
+            'included_post_types' => $included_types,
             'exclude_tags' => $exclude_tags,
             'exclude_categories' => $exclude_categories,
+            'sitemap_custom_url' => $custom_url // Salva a URL customizada
         ];
         
         update_option('vettryx_seo_sitemap_config', $config);
         echo '<div class="notice notice-success is-dismissible"><p>Configurações de SEO atualizadas com sucesso!</p></div>';
         
-        // Flush nas rotas para o alias funcionar
+        // REQUISITO OBRIGATÓRIO: Limpa as rotas do WP para a nova URL passar a existir
         flush_rewrite_rules();
     }
 
-    // Busca as opções salvas (Padrão: Inclui Posts e Pages, Exclui Tags, Mantém Categorias)
+    // Busca as opções salvas
     $config = get_option('vettryx_seo_sitemap_config', [
-        'included_post_types' => ['post', 'page'], // Padrão de inclusão
+        'included_post_types' => ['post', 'page'], 
         'exclude_tags' => '1', 
-        'exclude_categories' => '0'
+        'exclude_categories' => '0',
+        'sitemap_custom_url' => 'sitemap_index.xml'
     ]);
     
-    $url_sitemap = site_url('/sitemap_index.xml');
+    // Monta o link para o usuário clicar na tela
+    $url_sitemap = site_url('/' . $config['sitemap_custom_url']);
     ?>
     <div class="wrap">
         <h1 style="display:flex; align-items:center; gap:10px;">
@@ -229,13 +227,20 @@ function vettryx_seo_manager_html() {
             <?php wp_nonce_field('vettryx_seo_settings_action', 'vettryx_seo_settings_nonce'); ?>
             
             <h2 style="margin-top:0; border-bottom: 1px solid #eee; padding-bottom: 10px;">Sitemap XML</h2>
-            <p>Seu sitemap está disponível na URL padrão de mercado: <a href="<?php echo esc_url($url_sitemap); ?>" target="_blank"><strong>/sitemap_index.xml</strong></a></p>
+            <p>Acesse seu sitemap atual: <a href="<?php echo esc_url($url_sitemap); ?>" target="_blank"><strong>/<?php echo esc_html($config['sitemap_custom_url']); ?></strong></a></p>
             
             <table class="form-table">
                 <tr valign="top">
-                    <th scope="row">Controle de Tipos de Post (Inclusão)</th>
+                    <th scope="row"><label for="sitemap_custom_url">URL do Sitemap Index</label></th>
                     <td>
-                        <p class="description" style="margin-bottom:10px;">Selecione quais conteúdos do site devem ser indexados.</p>
+                        <input type="text" id="sitemap_custom_url" name="sitemap_custom_url" value="<?php echo esc_attr($config['sitemap_custom_url']); ?>" class="regular-text" />
+                        <p class="description">Personalize a URL principal do seu sitemap (ex: <code>meu-sitemap.xml</code>). O sistema ajusta automaticamente para o padrão seguro.</p>
+                    </td>
+                </tr>
+
+                <tr valign="top">
+                    <th scope="row">Controle de Tipos de Post</th>
+                    <td>
                         <div style="display:flex; flex-direction:column; gap:8px;">
                         <?php foreach ($interface_types as $type_slug => $type_obj) : ?>
                             <label style="display:block;">
@@ -248,11 +253,11 @@ function vettryx_seo_manager_html() {
                 </tr>
 
                 <tr valign="top">
-                    <th scope="row">Controle de Taxonomias (Exclusão)</th>
+                    <th scope="row">Controle de Taxonomias</th>
                     <td>
                         <label style="display:block; margin-bottom: 10px;">
                             <input type="checkbox" name="exclude_tags" value="1" <?php checked($config['exclude_tags'], '1'); ?> />
-                            Excluir <strong>Tags</strong> do Sitemap <span style="color:#666;">(Recomendado para evitar conteúdo duplicado no Google)</span>
+                            Excluir <strong>Tags</strong> do Sitemap
                         </label>
                         <label style="display:block;">
                             <input type="checkbox" name="exclude_categories" value="1" <?php checked($config['exclude_categories'], '1'); ?> />
@@ -270,46 +275,38 @@ function vettryx_seo_manager_html() {
     <?php
 }
 
-// 2.3 Cria o alias para sitemap_index.xml funcionar
+// 2.3 Cria o alias DINÂMICO para o sitemap
 add_action('init', 'vettryx_seo_sitemap_alias');
 function vettryx_seo_sitemap_alias() {
-    add_rewrite_rule('^sitemap_index\.xml$', 'index.php?sitemap=index', 'top');
+    $config = get_option('vettryx_seo_sitemap_config', []);
+    $alias = isset($config['sitemap_custom_url']) && !empty($config['sitemap_custom_url']) ? $config['sitemap_custom_url'] : 'sitemap_index.xml';
+    
+    // Transforma o texto do usuário em uma regra Regex segura para o WordPress
+    $regex = '^' . preg_quote($alias) . '$';
+    add_rewrite_rule($regex, 'index.php?sitemap=index', 'top');
 }
 
-// 2.4 Filtros Cirúrgicos do Sitemap Nativo (AGORA DINÂMICOS)
-// Remove Autores
+// 2.4 Filtros Cirúrgicos do Sitemap Nativo 
 add_filter('wp_sitemaps_add_provider', 'vettryx_seo_remove_users_sitemap', 10, 2);
 function vettryx_seo_remove_users_sitemap($provider, $name) {
     return ('users' === $name) ? false : $provider;
 }
 
-// Limita a Post Types Whitelisted no Painel (LOGICA DE INCLUSÃO)
 add_filter('wp_sitemaps_post_types', 'vettryx_seo_filter_sitemap_post_types');
 function vettryx_seo_filter_sitemap_post_types($post_types) {
-    // Busca a lista de inclusão (Padrão: Posts e Pages)
     $config = get_option('vettryx_seo_sitemap_config', ['included_post_types' => ['post', 'page']]);
     $allowed_types = isset($config['included_post_types']) ? $config['included_post_types'] : ['post', 'page'];
-
     foreach ($post_types as $post_type => $object) {
-        // Se o tipo de post NÃO está na lista permitida, remove-o
-        if (!in_array($post_type, $allowed_types)) {
-            unset($post_types[$post_type]);
-        }
+        if (!in_array($post_type, $allowed_types)) unset($post_types[$post_type]);
     }
     return $post_types;
 }
 
-// Aplica a lógica dinâmica das Taxonomias baseada na escolha do painel (LOGICA DE EXCLUSÃO)
 add_filter('wp_sitemaps_taxonomies', 'vettryx_seo_filter_sitemap_taxonomies');
 function vettryx_seo_filter_sitemap_taxonomies($taxonomies) {
     $config = get_option('vettryx_seo_sitemap_config', ['exclude_tags' => '1', 'exclude_categories' => '0']);
-    
-    if (isset($config['exclude_tags']) && $config['exclude_tags'] === '1' && isset($taxonomies['post_tag'])) {
-        unset($taxonomies['post_tag']); 
-    }
-    if (isset($config['exclude_categories']) && $config['exclude_categories'] === '1' && isset($taxonomies['category'])) {
-        unset($taxonomies['category']); 
-    }
+    if (isset($config['exclude_tags']) && $config['exclude_tags'] === '1' && isset($taxonomies['post_tag'])) unset($taxonomies['post_tag']); 
+    if (isset($config['exclude_categories']) && $config['exclude_categories'] === '1' && isset($taxonomies['category'])) unset($taxonomies['category']); 
     return $taxonomies;
 }
 

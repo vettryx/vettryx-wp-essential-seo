@@ -3,7 +3,7 @@
  * Plugin Name: VETTRYX WP Essential SEO
  * Plugin URI:  https://github.com/vettryx/vettryx-wp-core
  * Description: Módulo para otimização de SEO On-Page, sitemaps e redirecionamentos. Foco em performance e zero bloatware.
- * Version:     1.4.0
+ * Version:     1.4.1
  * Author:      VETTRYX Tech
  * Author URI:  https://vettryx.com.br
  * License:     Proprietária (Uso Comercial Exclusivo)
@@ -327,36 +327,30 @@ function vettryx_seo_prevent_sitemap_redirect($redirect_url) {
  */
 
 // 3.1 Auto-Updater: Cria e verifica a tabela no banco de dados silenciosamente
-function vettryx_seo_create_redirects_table() {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'vettryx_seo_redirects';
-    $charset_collate = $wpdb->get_charset_collate();
-
-    // SQL estrito para o dbDelta (sem comentários, espaçamento exato)
-    $sql = "CREATE TABLE $table_name (
-        id mediumint(9) NOT NULL AUTO_INCREMENT,
-        url_origem varchar(255) NOT NULL,
-        url_destino varchar(255) DEFAULT '' NOT NULL,
-        tipo varchar(10) DEFAULT '404' NOT NULL,
-        hits int(11) DEFAULT 0 NOT NULL,
-        ultimo_acesso datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        PRIMARY KEY  (id),
-        UNIQUE KEY url_origem (url_origem)
-    ) $charset_collate;";
-
-    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-    dbDelta($sql);
-}
-
-// Roda a verificação toda vez que o painel admin for carregado
 add_action('admin_init', 'vettryx_seo_check_and_create_table');
 function vettryx_seo_check_and_create_table() {
-    // Flag de controle de versão do banco de dados
-    $db_version = '1.0.0';
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'vettryx_seo_redirects';
+    $db_version = '1.0.3'; // Incrementado para forçar a verificação
     
-    // Se a versão instalada for diferente da versão do código, força a recriação/atualização da tabela
-    if (get_option('vettryx_seo_redirects_db_version') !== $db_version) {
-        vettryx_seo_create_redirects_table();
+    // Se a versão instalada for diferente ou a tabela não existir, força a criação
+    if (get_option('vettryx_seo_redirects_db_version') !== $db_version || $wpdb->get_var("SHOW TABLES LIKE '$table_name'") != $table_name) {
+        $charset_collate = $wpdb->get_charset_collate();
+
+        // CORREÇÃO CRÍTICA: SQL estrito, sem NENHUM comentário, para o dbDelta não falhar
+        $sql = "CREATE TABLE $table_name (
+            id mediumint(9) NOT NULL AUTO_INCREMENT,
+            url_origem varchar(255) NOT NULL,
+            url_destino varchar(255) DEFAULT '' NOT NULL,
+            tipo varchar(10) DEFAULT '404' NOT NULL,
+            hits int(11) DEFAULT 0 NOT NULL,
+            ultimo_acesso datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY url_origem (url_origem)
+        ) $charset_collate;";
+
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql);
         update_option('vettryx_seo_redirects_db_version', $db_version);
     }
 }
@@ -364,42 +358,43 @@ function vettryx_seo_check_and_create_table() {
 // 3.2 Intercepta o tráfego (O Guardião)
 add_action('template_redirect', 'vettryx_seo_traffic_guardian', 1);
 function vettryx_seo_traffic_guardian() {
-    // Ignora o painel admin
     if (is_admin()) return;
 
     global $wpdb;
     $table_name = $wpdb->prefix . 'vettryx_seo_redirects';
     
-    // Pega a URL exata que o usuário tentou acessar (sem o domínio)
+    // Pega a URL exata que o usuário tentou acessar (sem o domínio e garantindo a barra inicial)
     $requested_url = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-    $requested_url = untrailingslashit($requested_url); // Remove barra final para padronizar
+    $requested_url = untrailingslashit($requested_url); 
+    if(empty($requested_url)) return; // Ignora home vazia
+
+    // Evita loop infinito tentando redirecionar a própria URL que está quebrando as vezes no wp-admin
+    if(strpos($requested_url, 'wp-content') !== false || strpos($requested_url, 'wp-admin') !== false) return;
     
-    // 1. Busca no banco se existe uma regra para essa URL
+    // Busca a regra
     $rule = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE url_origem = %s", $requested_url));
 
-    // 2. Se a URL não existe (Erro 404 real do WordPress)
     if (is_404()) {
         if ($rule) {
-            // Se já tem no banco, apenas atualiza o contador de 'hits'
-            $wpdb->query($wpdb->prepare("UPDATE $table_name SET hits = hits + 1, ultimo_acesso = CURRENT_TIMESTAMP WHERE id = %d", $rule->id));
+            // Se o destino foi preenchido por você no painel, ele DEVE virar 301
+            if (!empty($rule->url_destino) && $rule->tipo === '301') {
+                 $wpdb->query($wpdb->prepare("UPDATE $table_name SET hits = hits + 1, ultimo_acesso = CURRENT_TIMESTAMP WHERE id = %d", $rule->id));
+                 wp_redirect(home_url($rule->url_destino), 301);
+                 exit;
+            } else {
+                 // É só um 404 sendo acessado novamente
+                 $wpdb->query($wpdb->prepare("UPDATE $table_name SET hits = hits + 1, ultimo_acesso = CURRENT_TIMESTAMP WHERE id = %d", $rule->id));
+            }
         } else {
-            // Se é um 404 novo, registra na tabela para o usuário ver no painel depois
+            // Novo erro 404 descoberto
             $wpdb->insert(
                 $table_name,
-                array(
-                    'url_origem' => $requested_url,
-                    'tipo' => '404',
-                    'hits' => 1
-                )
+                array('url_origem' => $requested_url, 'tipo' => '404', 'hits' => 1)
             );
         }
-    } 
-    // 3. Se a URL tem uma regra de redirecionamento (301) configurada no banco
-    elseif ($rule && $rule->tipo === '301' && !empty($rule->url_destino)) {
-        // Atualiza o contador de hits do redirecionamento
+    } elseif ($rule && $rule->tipo === '301' && !empty($rule->url_destino)) {
+        // Rota normal que você mandou redirecionar (mesmo não sendo 404 nativo, a regra força o redirecionamento)
         $wpdb->query($wpdb->prepare("UPDATE $table_name SET hits = hits + 1, ultimo_acesso = CURRENT_TIMESTAMP WHERE id = %d", $rule->id));
-        
-        // Executa o redirecionamento permanente
         wp_redirect(home_url($rule->url_destino), 301);
         exit;
     }
@@ -408,133 +403,176 @@ function vettryx_seo_traffic_guardian() {
 // 3.3 Adiciona o submenu "Redirect Manager"
 add_action('admin_menu', 'vettryx_seo_redirects_submenu', 99);
 function vettryx_seo_redirects_submenu() {
-    add_submenu_page(
-        'vettryx-core-modules',
-        'Redirect Manager - VETTRYX Tech',
-        'Redirect Manager', // Mantendo seu padrão de nomenclatura
-        'manage_options',
-        'vettryx-seo-redirects',
-        'vettryx_seo_redirects_html'
-    );
+    add_submenu_page('vettryx-core-modules', 'Redirect Manager - VETTRYX Tech', 'Redirect Manager', 'manage_options', 'vettryx-seo-redirects', 'vettryx_seo_redirects_html');
 }
 
-// 3.4 Interface do Redirect Manager (CRUD)
+// 3.4 Interface do Redirect Manager (Separada)
 function vettryx_seo_redirects_html() {
     if (!current_user_can('manage_options')) return;
     
     global $wpdb;
     $table_name = $wpdb->prefix . 'vettryx_seo_redirects';
 
-    // Garante que a tabela exista antes de consultar (Evita erro fatal se o plugin não foi reativado)
+    // AVISO: Se mesmo após o F5 a tabela não existir
     if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") != $table_name) {
-        echo '<div class="notice notice-error"><p>Erro: Tabela de redirecionamentos não encontrada. Por favor, desative e ative o plugin VETTRYX WP Essential SEO novamente para criar a base de dados.</p></div>';
-        return;
+        echo '<div class="notice notice-error"><p>Aguarde... Configurando o Banco de Dados. Dê um F5 (Atualizar) nesta página.</p></div>';
+        return; // Retorna para não quebrar a página
     }
 
-    // Processa as ações do formulário (Salvar Destino, Excluir ou Criar Manual)
+    // Processa Ações
     if (isset($_POST['vettryx_redirect_action']) && check_admin_referer('vettryx_redirect_nonce')) {
-        
         if ($_POST['vettryx_redirect_action'] === 'save_redirect') {
             $id = intval($_POST['id']);
             $destino = sanitize_text_field($_POST['url_destino']);
-            $tipo = !empty($destino) ? '301' : '404'; // Se você preencheu um destino, a rota vira 301 permanente
+            $destino = untrailingslashit($destino); // Limpeza de URL
+            
+            // CORREÇÃO CRÍTICA: Se preencheu destino, VIRA 301 obrigatoriamente
+            $tipo = !empty($destino) ? '301' : '404'; 
             
             $wpdb->update($table_name, ['url_destino' => $destino, 'tipo' => $tipo], ['id' => $id]);
-            echo '<div class="notice notice-success is-dismissible"><p>Regra atualizada com sucesso!</p></div>';
+            echo '<div class="notice notice-success is-dismissible"><p>Sucesso! A regra foi alterada.</p></div>';
         } 
         elseif ($_POST['vettryx_redirect_action'] === 'delete_rule') {
             $id = intval($_POST['id']);
             $wpdb->delete($table_name, ['id' => $id]);
-            echo '<div class="notice notice-success is-dismissible"><p>Registro apagado da memória.</p></div>';
+            echo '<div class="notice notice-info is-dismissible"><p>Registro apagado. Se acessarem de novo, será um novo Erro 404.</p></div>';
         }
         elseif ($_POST['vettryx_redirect_action'] === 'add_manual') {
             $origem = untrailingslashit(sanitize_text_field($_POST['url_origem']));
-            $destino = sanitize_text_field($_POST['url_destino']);
+            $destino = untrailingslashit(sanitize_text_field($_POST['url_destino']));
             
-            if (!empty($origem) && !empty($destino)) {
+            if (!empty($origem) && !empty($destino) && $origem !== $destino) {
+                // Se preencheu os dois campos e são diferentes, cria 301
                 $wpdb->replace($table_name, [
                     'url_origem' => $origem,
                     'url_destino' => $destino,
                     'tipo' => '301',
                     'hits' => 0
                 ]);
-                echo '<div class="notice notice-success is-dismissible"><p>Redirecionamento manual criado e ativo!</p></div>';
+                echo '<div class="notice notice-success is-dismissible"><p>Redirecionamento manual ativado!</p></div>';
+            } else {
+                 echo '<div class="notice notice-error is-dismissible"><p>Erro: Origem e Destino devem ser diferentes e preenchidos.</p></div>';
             }
         }
     }
 
-    // Busca os registros no banco (Ordena pelos links mais acessados e mais recentes)
-    $rules = $wpdb->get_results("SELECT * FROM $table_name ORDER BY hits DESC, ultimo_acesso DESC LIMIT 100");
+    // BUSCAS SEPARADAS PARA A INTERFACE
+    $erros_404 = $wpdb->get_results("SELECT * FROM $table_name WHERE tipo = '404' ORDER BY ultimo_acesso DESC LIMIT 50");
+    $regras_301 = $wpdb->get_results("SELECT * FROM $table_name WHERE tipo = '301' ORDER BY ultimo_acesso DESC LIMIT 50");
     ?>
+    
     <div class="wrap">
-        <h1 style="display:flex; align-items:center; gap:10px;">
+        <h1 style="display:flex; align-items:center; gap:10px; margin-bottom: 20px;">
             <span class="dashicons dashicons-randomize" style="font-size: 28px; width: 28px; height: 28px;"></span> 
             VETTRYX Redirect Manager
         </h1>
-        <p>Monitore erros 404 e crie redirecionamentos 301 para recuperar o tráfego de páginas apagadas.</p>
 
-        <div style="background: #fff; padding: 15px; border: 1px solid #ccd0d4; margin-bottom: 20px; max-width: 800px; box-shadow: 0 1px 1px rgba(0,0,0,.04);">
-            <h3 style="margin-top:0;">Adicionar Regra Manual</h3>
-            <form method="post" style="display:flex; gap:10px; align-items:flex-end; flex-wrap: wrap;">
+        <div style="background: #fff; padding: 20px; border: 1px solid #ccd0d4; margin-bottom: 30px; max-width: 800px; box-shadow: 0 1px 1px rgba(0,0,0,.04);">
+            <h3 style="margin-top:0; color: #0073aa; border-bottom: 1px solid #eee; padding-bottom: 10px;">Adicionar Regra 301 (Manual)</h3>
+            <p style="color: #666; font-size: 13px;">Crie um redirecionamento forçado de uma página que mudou de link ou que você quer desviar o tráfego.</p>
+            <form method="post" style="display:flex; gap:15px; align-items:flex-end; flex-wrap: wrap;">
                 <?php wp_nonce_field('vettryx_redirect_nonce'); ?>
                 <input type="hidden" name="vettryx_redirect_action" value="add_manual">
                 
                 <div style="flex:1; min-width: 250px;">
-                    <label style="display:block; font-weight:600; margin-bottom:5px;">De: (URL Antiga / Quebrada)</label>
+                    <label style="display:block; font-weight:600; margin-bottom:5px;">De: (URL Antiga / Incorreta)</label>
                     <input type="text" name="url_origem" placeholder="Ex: /quem-somos" required style="width:100%;">
                 </div>
                 <div style="flex:1; min-width: 250px;">
-                    <label style="display:block; font-weight:600; margin-bottom:5px;">Para: (Nova URL)</label>
+                    <label style="display:block; font-weight:600; margin-bottom:5px;">Para: (Nova URL de Destino)</label>
                     <input type="text" name="url_destino" placeholder="Ex: /sobre-nos" required style="width:100%;">
                 </div>
                 <div>
-                    <button type="submit" class="button button-primary">Criar 301</button>
+                    <button type="submit" class="button button-primary">Ativar Redirecionamento</button>
                 </div>
             </form>
         </div>
 
-        <table class="wp-list-table widefat fixed striped">
+        <h2 style="margin-bottom: 10px;">Regras Ativas (Interceptando Tráfego)</h2>
+        <table class="wp-list-table widefat fixed striped" style="margin-bottom: 30px;">
             <thead>
                 <tr>
                     <th style="width: 80px;">Status</th>
-                    <th style="width: 30%;">URL Tentada (Origem)</th>
-                    <th style="width: 80px;">Acessos</th>
-                    <th style="width: 150px;">Último Registro</th>
-                    <th>Destino (Preencha para virar 301)</th>
-                    <th style="width: 80px;">Limpar</th>
+                    <th style="width: 30%;">Usuário acessa...</th>
+                    <th>É jogado para...</th>
+                    <th style="width: 100px;">Interceptações</th>
+                    <th style="width: 150px;">Última vez</th>
+                    <th style="width: 80px;">Remover</th>
                 </tr>
             </thead>
             <tbody>
-                <?php if (empty($rules)) : ?>
-                    <tr><td colspan="6" style="padding: 20px; text-align: center; color: #666;">Nenhum erro 404 registrado ou regra de redirecionamento ativa. Seu tráfego está limpo.</td></tr>
+                <?php if (empty($regras_301)) : ?>
+                    <tr><td colspan="6" style="padding: 15px; text-align: center; color: #666;">Nenhuma regra de redirecionamento salva.</td></tr>
                 <?php else : ?>
-                    <?php foreach ($rules as $rule) : ?>
+                    <?php foreach ($regras_301 as $rule) : ?>
                         <tr>
-                            <td>
-                                <?php if ($rule->tipo === '301') : ?>
-                                    <span style="background:#46b450; color:#fff; padding:3px 8px; border-radius:3px; font-weight:bold;">301</span>
-                                <?php else : ?>
-                                    <span style="background:#dc3232; color:#fff; padding:3px 8px; border-radius:3px; font-weight:bold;">404</span>
-                                <?php endif; ?>
-                            </td>
+                            <td><span style="background:#46b450; color:#fff; padding:4px 8px; border-radius:3px; font-weight:bold; font-size:12px;">301</span></td>
                             <td><strong><?php echo esc_html($rule->url_origem); ?></strong></td>
-                            <td><?php echo esc_html($rule->hits); ?></td>
-                            <td><?php echo esc_html(wp_date('d/m/Y H:i', strtotime($rule->ultimo_acesso))); ?></td>
                             <td>
                                 <form method="post" style="display:flex; gap:5px;">
                                     <?php wp_nonce_field('vettryx_redirect_nonce'); ?>
                                     <input type="hidden" name="vettryx_redirect_action" value="save_redirect">
                                     <input type="hidden" name="id" value="<?php echo esc_attr($rule->id); ?>">
-                                    <input type="text" name="url_destino" value="<?php echo esc_attr($rule->url_destino); ?>" placeholder="/nova-pagina (Deixe vazio para voltar a ser 404)" style="width: 100%; max-width: 250px;">
-                                    <button type="submit" class="button">Atualizar</button>
+                                    <input type="text" name="url_destino" value="<?php echo esc_attr($rule->url_destino); ?>" style="width: 100%;" required>
+                                    <button type="submit" class="button">Salvar</button>
                                 </form>
                             </td>
+                            <td><?php echo esc_html($rule->hits); ?></td>
+                            <td><span style="font-size:12px; color:#666;"><?php echo esc_html(wp_date('d/m/Y H:i', strtotime($rule->ultimo_acesso))); ?></span></td>
                             <td>
-                                <form method="post" onsubmit="return confirm('Apagar este registro da memória?');">
+                                <form method="post" onsubmit="return confirm('Deseja excluir esta regra permanentemente?');">
                                     <?php wp_nonce_field('vettryx_redirect_nonce'); ?>
                                     <input type="hidden" name="vettryx_redirect_action" value="delete_rule">
                                     <input type="hidden" name="id" value="<?php echo esc_attr($rule->id); ?>">
-                                    <button type="submit" class="button button-link-delete" style="color:#a00;">X</button>
+                                    <button type="submit" class="button button-link-delete" style="color:#a00;">Excluir</button>
+                                </form>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </tbody>
+        </table>
+
+        <hr style="border: 0; border-top: 2px solid #ccc; margin: 40px 0;">
+
+        <h2 style="margin-bottom: 10px;">Monitor de Erros (Páginas Não Encontradas)</h2>
+        <p style="color: #666; font-size: 13px; margin-top: -5px;">Preencha o campo "Criar Destino" para transformar um erro em um redirecionamento permanente (301).</p>
+        <table class="wp-list-table widefat fixed striped">
+            <thead>
+                <tr>
+                    <th style="width: 80px;">Erro</th>
+                    <th style="width: 30%;">Alguém tentou acessar...</th>
+                    <th style="width: 100px;">Vezes</th>
+                    <th style="width: 150px;">Última vez</th>
+                    <th>Criar Destino (Transformar em 301)</th>
+                    <th style="width: 80px;">Ignorar</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (empty($erros_404)) : ?>
+                    <tr><td colspan="6" style="padding: 15px; text-align: center; color: #666;">Seu site está limpo. Nenhum erro 404 registrado.</td></tr>
+                <?php else : ?>
+                    <?php foreach ($erros_404 as $rule) : ?>
+                        <tr>
+                            <td><span style="background:#dc3232; color:#fff; padding:4px 8px; border-radius:3px; font-weight:bold; font-size:12px;">404</span></td>
+                            <td><strong style="color: #cf2e2e;"><?php echo esc_html($rule->url_origem); ?></strong></td>
+                            <td><?php echo esc_html($rule->hits); ?></td>
+                            <td><span style="font-size:12px; color:#666;"><?php echo esc_html(wp_date('d/m/Y H:i', strtotime($rule->ultimo_acesso))); ?></span></td>
+                            <td>
+                                <form method="post" style="display:flex; gap:5px;">
+                                    <?php wp_nonce_field('vettryx_redirect_nonce'); ?>
+                                    <input type="hidden" name="vettryx_redirect_action" value="save_redirect">
+                                    <input type="hidden" name="id" value="<?php echo esc_attr($rule->id); ?>">
+                                    <input type="text" name="url_destino" placeholder="/pagina-correta" style="width: 100%;">
+                                    <button type="submit" class="button button-primary">Mudar para 301</button>
+                                </form>
+                            </td>
+                            <td>
+                                <form method="post" onsubmit="return confirm('Deseja limpar este erro do log?');">
+                                    <?php wp_nonce_field('vettryx_redirect_nonce'); ?>
+                                    <input type="hidden" name="vettryx_redirect_action" value="delete_rule">
+                                    <input type="hidden" name="id" value="<?php echo esc_attr($rule->id); ?>">
+                                    <button type="submit" class="button" style="color:#666;">Ignorar</button>
                                 </form>
                             </td>
                         </tr>

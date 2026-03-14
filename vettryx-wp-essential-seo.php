@@ -3,7 +3,7 @@
  * Plugin Name: VETTRYX WP Essential SEO
  * Plugin URI:  https://github.com/vettryx/vettryx-wp-core
  * Description: Módulo para otimização de SEO On-Page, sitemaps e redirecionamentos. Foco em performance e zero bloatware.
- * Version:     1.0.1
+ * Version:     1.1.0
  * Author:      VETTRYX Tech
  * Author URI:  https://vettryx.com.br
  * License:     Proprietária (Uso Comercial Exclusivo)
@@ -146,13 +146,118 @@ function vettryx_seo_inject_meta_tags() {
 
 /**
  * ==============================================================================
- * 2. GERENCIADOR DE ROTAS E SITEMAP
- * Responsável por limpar o sitemap nativo do WP e monitorar erros 404/301.
+ * 2. GERENCIADOR DE ROTAS E SITEMAP (SEO MANAGER)
+ * Responsável pela interface no painel, alias do sitemap e filtros dinâmicos.
  * ==============================================================================
  */
 
-// add_filter('wp_sitemaps_post_types', 'vettryx_seo_filter_sitemap_post_types');
-// add_action('template_redirect', 'vettryx_seo_monitor_404_and_redirects');
+// 2.1 Adiciona o submenu "SEO Manager" abaixo de "VETTRYX Tech"
+add_action('admin_menu', 'vettryx_seo_add_submenu', 99);
+function vettryx_seo_add_submenu() {
+    add_submenu_page(
+        'vettryx-core-modules',       // Slug do menu pai
+        'SEO Manager - VETTRYX Tech', // Título da página
+        'SEO Manager',                // Título do submenu
+        'manage_options',             // Permissão
+        'vettryx-seo-manager',        // Slug da página
+        'vettryx_seo_manager_html'    // Função que desenha a página
+    );
+}
+
+// 2.2 Desenha a interface do SEO Manager
+function vettryx_seo_manager_html() {
+    if (!current_user_can('manage_options')) return;
+
+    // Processa o salvamento do formulário
+    if (isset($_POST['vettryx_seo_save_settings']) && check_admin_referer('vettryx_seo_settings_action', 'vettryx_seo_settings_nonce')) {
+        $config = [
+            'exclude_tags' => isset($_POST['exclude_tags']) ? '1' : '0',
+            'exclude_categories' => isset($_POST['exclude_categories']) ? '1' : '0',
+        ];
+        update_option('vettryx_seo_sitemap_config', $config);
+        echo '<div class="notice notice-success is-dismissible"><p>Configurações de SEO atualizadas com sucesso!</p></div>';
+        
+        // Dá um flush nas rotas para garantir que o alias funcione
+        flush_rewrite_rules();
+    }
+
+    // Busca as opções salvas (por padrão, tags são excluídas para evitar duplicidade)
+    $config = get_option('vettryx_seo_sitemap_config', ['exclude_tags' => '1', 'exclude_categories' => '0']);
+    $url_sitemap = site_url('/sitemap_index.xml');
+    ?>
+    <div class="wrap">
+        <h1 style="display:flex; align-items:center; gap:10px;">
+            <span class="dashicons dashicons-search" style="font-size: 28px; width: 28px; height: 28px;"></span> 
+            VETTRYX SEO Manager
+        </h1>
+        <p>Gerencie as preferências de tráfego orgânico e a indexação do site.</p>
+        
+        <form method="post" action="" style="background: #fff; padding: 20px; border: 1px solid #ccd0d4; box-shadow: 0 1px 1px rgba(0,0,0,.04); max-width: 800px; margin-top: 20px;">
+            <?php wp_nonce_field('vettryx_seo_settings_action', 'vettryx_seo_settings_nonce'); ?>
+            
+            <h2 style="margin-top:0; border-bottom: 1px solid #eee; padding-bottom: 10px;">Sitemap XML</h2>
+            <p>Seu sitemap está disponível na URL padrão de mercado: <a href="<?php echo esc_url($url_sitemap); ?>" target="_blank"><strong>/sitemap_index.xml</strong></a></p>
+            
+            <table class="form-table">
+                <tr valign="top">
+                    <th scope="row">Controle de Taxonomias</th>
+                    <td>
+                        <label style="display:block; margin-bottom: 10px;">
+                            <input type="checkbox" name="exclude_tags" value="1" <?php checked($config['exclude_tags'], '1'); ?> />
+                            Excluir <strong>Tags</strong> do Sitemap <span style="color:#666;">(Recomendado para evitar conteúdo duplicado no Google)</span>
+                        </label>
+                        <label style="display:block;">
+                            <input type="checkbox" name="exclude_categories" value="1" <?php checked($config['exclude_categories'], '1'); ?> />
+                            Excluir <strong>Categorias</strong> do Sitemap
+                        </label>
+                    </td>
+                </tr>
+            </table>
+            
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+            
+            <?php submit_button('Salvar Configurações', 'primary', 'vettryx_seo_save_settings', false); ?>
+        </form>
+    </div>
+    <?php
+}
+
+// 2.3 Cria o alias para sitemap_index.xml funcionar
+add_action('init', 'vettryx_seo_sitemap_alias');
+function vettryx_seo_sitemap_alias() {
+    add_rewrite_rule('^sitemap_index\.xml$', 'index.php?sitemap=index', 'top');
+}
+
+// 2.4 Filtros Cirúrgicos do Sitemap Nativo
+// Remove Autores
+add_filter('wp_sitemaps_add_provider', 'vettryx_seo_remove_users_sitemap', 10, 2);
+function vettryx_seo_remove_users_sitemap($provider, $name) {
+    return ('users' === $name) ? false : $provider;
+}
+
+// Limita a Posts e Pages
+add_filter('wp_sitemaps_post_types', 'vettryx_seo_filter_sitemap_post_types');
+function vettryx_seo_filter_sitemap_post_types($post_types) {
+    $allowed = ['post', 'page']; // Se criar CPTs como "portfolio", adicione aqui
+    foreach ($post_types as $post_type => $object) {
+        if (!in_array($post_type, $allowed)) unset($post_types[$post_type]);
+    }
+    return $post_types;
+}
+
+// Aplica a lógica dinâmica das Taxonomias baseada na escolha do painel
+add_filter('wp_sitemaps_taxonomies', 'vettryx_seo_filter_sitemap_taxonomies');
+function vettryx_seo_filter_sitemap_taxonomies($taxonomies) {
+    $config = get_option('vettryx_seo_sitemap_config', ['exclude_tags' => '1', 'exclude_categories' => '0']);
+    
+    if (isset($config['exclude_tags']) && $config['exclude_tags'] === '1' && isset($taxonomies['post_tag'])) {
+        unset($taxonomies['post_tag']); 
+    }
+    if (isset($config['exclude_categories']) && $config['exclude_categories'] === '1' && isset($taxonomies['category'])) {
+        unset($taxonomies['category']); 
+    }
+    return $taxonomies;
+}
 
 /**
  * ==============================================================================

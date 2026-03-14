@@ -3,7 +3,7 @@
  * Plugin Name: VETTRYX WP Essential SEO
  * Plugin URI:  https://github.com/vettryx/vettryx-wp-core
  * Description: Módulo para otimização de SEO On-Page, sitemaps e redirecionamentos. Foco em performance e zero bloatware.
- * Version:     1.3.0
+ * Version:     1.3.1
  * Author:      VETTRYX Tech
  * Author URI:  https://vettryx.com.br
  * License:     Proprietária (Uso Comercial Exclusivo)
@@ -558,19 +558,25 @@ add_filter('the_content', 'vettryx_seo_auto_image_alt', 99);
 function vettryx_seo_auto_image_alt($content) {
     if (is_singular() && in_the_loop() && is_main_query()) {
         global $post;
+        // Pega o título do post e garante que ele seja seguro para entrar em um atributo HTML
         $title = esc_attr(get_the_title($post->ID));
         
-        // Magia Negra (Regex) 1: Encontra tags <img> que NÃO possuem o atributo alt e injeta o título
-        $content = preg_replace(
-            '/<img(?![^>]*\balt=["\'](.*?)["\'])(([^>]*)>)/i', 
-            '<img alt="' . $title . '"$3', 
-            $content
-        );
+        // 1. Substitui atributos alt vazios explícitos: alt="" ou alt=''
+        // A Regex procura exatamente por alt="" ou alt='' dentro de qualquer tag img
+        $content = preg_replace('/(<img[^>]*)\balt=(["\'])\2([^>]*>)/i', '$1alt="' . $title . '"$3', $content);
         
-        // Magia Negra (Regex) 2: Encontra tags <img> que têm o alt, mas ele está vazio (alt="") e injeta o título
-        $content = preg_replace(
-            '/<img([^>]*)\balt=["\']["\']([^>]*)>/i', 
-            '<img$1alt="' . $title . '"$2>', 
+        // 2. Injeta o alt se a tag <img> não tiver o atributo alt de forma alguma
+        // Esta Regex é muito mais permissiva com espaços e outros atributos do Elementor/LiteSpeed
+        $content = preg_replace_callback(
+            '/<img([^>]+)>/i',
+            function($matches) use ($title) {
+                $img_tag = $matches[0];
+                // Só injeta se a palavra "alt=" NÃO existir dentro da string capturada da imagem
+                if (stripos($img_tag, 'alt=') === false) {
+                    return str_replace('<img ', '<img alt="' . $title . '" ', $img_tag);
+                }
+                return $img_tag;
+            },
             $content
         );
     }

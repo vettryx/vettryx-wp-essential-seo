@@ -3,7 +3,7 @@
  * Plugin Name: VETTRYX WP Essential SEO
  * Plugin URI:  https://github.com/vettryx/vettryx-wp-core
  * Description: Módulo para otimização de SEO On-Page, sitemaps e redirecionamentos. Foco em performance e zero bloatware.
- * Version:     1.2.0
+ * Version:     1.2.1
  * Author:      VETTRYX Tech
  * Author URI:  https://vettryx.com.br
  * License:     Proprietária (Uso Comercial Exclusivo)
@@ -390,6 +390,147 @@ function vettryx_seo_traffic_guardian() {
         wp_redirect(home_url($rule->url_destino), 301);
         exit;
     }
+}
+
+// 3.3 Adiciona o submenu "Redirect Manager"
+add_action('admin_menu', 'vettryx_seo_redirects_submenu', 99);
+function vettryx_seo_redirects_submenu() {
+    add_submenu_page(
+        'vettryx-core-modules',
+        'Redirect Manager - VETTRYX Tech',
+        'Redirect Manager', // Mantendo seu padrão de nomenclatura
+        'manage_options',
+        'vettryx-seo-redirects',
+        'vettryx_seo_redirects_html'
+    );
+}
+
+// 3.4 Interface do Redirect Manager (CRUD)
+function vettryx_seo_redirects_html() {
+    if (!current_user_can('manage_options')) return;
+    
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'vettryx_seo_redirects';
+
+    // Garante que a tabela exista antes de consultar (Evita erro fatal se o plugin não foi reativado)
+    if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") != $table_name) {
+        echo '<div class="notice notice-error"><p>Erro: Tabela de redirecionamentos não encontrada. Por favor, desative e ative o plugin VETTRYX WP Essential SEO novamente para criar a base de dados.</p></div>';
+        return;
+    }
+
+    // Processa as ações do formulário (Salvar Destino, Excluir ou Criar Manual)
+    if (isset($_POST['vettryx_redirect_action']) && check_admin_referer('vettryx_redirect_nonce')) {
+        
+        if ($_POST['vettryx_redirect_action'] === 'save_redirect') {
+            $id = intval($_POST['id']);
+            $destino = sanitize_text_field($_POST['url_destino']);
+            $tipo = !empty($destino) ? '301' : '404'; // Se você preencheu um destino, a rota vira 301 permanente
+            
+            $wpdb->update($table_name, ['url_destino' => $destino, 'tipo' => $tipo], ['id' => $id]);
+            echo '<div class="notice notice-success is-dismissible"><p>Regra atualizada com sucesso!</p></div>';
+        } 
+        elseif ($_POST['vettryx_redirect_action'] === 'delete_rule') {
+            $id = intval($_POST['id']);
+            $wpdb->delete($table_name, ['id' => $id]);
+            echo '<div class="notice notice-success is-dismissible"><p>Registro apagado da memória.</p></div>';
+        }
+        elseif ($_POST['vettryx_redirect_action'] === 'add_manual') {
+            $origem = untrailingslashit(sanitize_text_field($_POST['url_origem']));
+            $destino = sanitize_text_field($_POST['url_destino']);
+            
+            if (!empty($origem) && !empty($destino)) {
+                $wpdb->replace($table_name, [
+                    'url_origem' => $origem,
+                    'url_destino' => $destino,
+                    'tipo' => '301',
+                    'hits' => 0
+                ]);
+                echo '<div class="notice notice-success is-dismissible"><p>Redirecionamento manual criado e ativo!</p></div>';
+            }
+        }
+    }
+
+    // Busca os registros no banco (Ordena pelos links mais acessados e mais recentes)
+    $rules = $wpdb->get_results("SELECT * FROM $table_name ORDER BY hits DESC, ultimo_acesso DESC LIMIT 100");
+    ?>
+    <div class="wrap">
+        <h1 style="display:flex; align-items:center; gap:10px;">
+            <span class="dashicons dashicons-randomize" style="font-size: 28px; width: 28px; height: 28px;"></span> 
+            VETTRYX Redirect Manager
+        </h1>
+        <p>Monitore erros 404 e crie redirecionamentos 301 para recuperar o tráfego de páginas apagadas.</p>
+
+        <div style="background: #fff; padding: 15px; border: 1px solid #ccd0d4; margin-bottom: 20px; max-width: 800px; box-shadow: 0 1px 1px rgba(0,0,0,.04);">
+            <h3 style="margin-top:0;">Adicionar Regra Manual</h3>
+            <form method="post" style="display:flex; gap:10px; align-items:flex-end; flex-wrap: wrap;">
+                <?php wp_nonce_field('vettryx_redirect_nonce'); ?>
+                <input type="hidden" name="vettryx_redirect_action" value="add_manual">
+                
+                <div style="flex:1; min-width: 250px;">
+                    <label style="display:block; font-weight:600; margin-bottom:5px;">De: (URL Antiga / Quebrada)</label>
+                    <input type="text" name="url_origem" placeholder="Ex: /quem-somos" required style="width:100%;">
+                </div>
+                <div style="flex:1; min-width: 250px;">
+                    <label style="display:block; font-weight:600; margin-bottom:5px;">Para: (Nova URL)</label>
+                    <input type="text" name="url_destino" placeholder="Ex: /sobre-nos" required style="width:100%;">
+                </div>
+                <div>
+                    <button type="submit" class="button button-primary">Criar 301</button>
+                </div>
+            </form>
+        </div>
+
+        <table class="wp-list-table widefat fixed striped">
+            <thead>
+                <tr>
+                    <th style="width: 80px;">Status</th>
+                    <th style="width: 30%;">URL Tentada (Origem)</th>
+                    <th style="width: 80px;">Acessos</th>
+                    <th style="width: 150px;">Último Registro</th>
+                    <th>Destino (Preencha para virar 301)</th>
+                    <th style="width: 80px;">Limpar</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (empty($rules)) : ?>
+                    <tr><td colspan="6" style="padding: 20px; text-align: center; color: #666;">Nenhum erro 404 registrado ou regra de redirecionamento ativa. Seu tráfego está limpo.</td></tr>
+                <?php else : ?>
+                    <?php foreach ($rules as $rule) : ?>
+                        <tr>
+                            <td>
+                                <?php if ($rule->tipo === '301') : ?>
+                                    <span style="background:#46b450; color:#fff; padding:3px 8px; border-radius:3px; font-weight:bold;">301</span>
+                                <?php else : ?>
+                                    <span style="background:#dc3232; color:#fff; padding:3px 8px; border-radius:3px; font-weight:bold;">404</span>
+                                <?php endif; ?>
+                            </td>
+                            <td><strong><?php echo esc_html($rule->url_origem); ?></strong></td>
+                            <td><?php echo esc_html($rule->hits); ?></td>
+                            <td><?php echo esc_html(wp_date('d/m/Y H:i', strtotime($rule->ultimo_acesso))); ?></td>
+                            <td>
+                                <form method="post" style="display:flex; gap:5px;">
+                                    <?php wp_nonce_field('vettryx_redirect_nonce'); ?>
+                                    <input type="hidden" name="vettryx_redirect_action" value="save_redirect">
+                                    <input type="hidden" name="id" value="<?php echo esc_attr($rule->id); ?>">
+                                    <input type="text" name="url_destino" value="<?php echo esc_attr($rule->url_destino); ?>" placeholder="/nova-pagina (Deixe vazio para voltar a ser 404)" style="width: 100%; max-width: 250px;">
+                                    <button type="submit" class="button">Atualizar</button>
+                                </form>
+                            </td>
+                            <td>
+                                <form method="post" onsubmit="return confirm('Apagar este registro da memória?');">
+                                    <?php wp_nonce_field('vettryx_redirect_nonce'); ?>
+                                    <input type="hidden" name="vettryx_redirect_action" value="delete_rule">
+                                    <input type="hidden" name="id" value="<?php echo esc_attr($rule->id); ?>">
+                                    <button type="submit" class="button button-link-delete" style="color:#a00;">X</button>
+                                </form>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php
 }
 
 /**

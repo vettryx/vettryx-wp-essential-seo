@@ -3,7 +3,7 @@
  * Plugin Name: VETTRYX WP Essential SEO
  * Plugin URI:  https://github.com/vettryx/vettryx-wp-core
  * Description: Módulo para otimização de SEO On-Page, sitemaps e redirecionamentos. Foco em performance e zero bloatware.
- * Version:     1.2.2
+ * Version:     1.3.0
  * Author:      VETTRYX Tech
  * Author URI:  https://vettryx.com.br
  * License:     Proprietária (Uso Comercial Exclusivo)
@@ -548,13 +548,101 @@ function vettryx_seo_redirects_html() {
 
 /**
  * ==============================================================================
- * 3. AUTOMAÇÕES (IMAGENS E SCHEMA)
- * Responsável por injetar atributos alt dinâmicos e JSON-LD.
+ * 4. AUTOMAÇÕES (IMAGENS E SCHEMA JSON-LD)
+ * Responsável por injetar atributos alt dinâmicos e marcação estruturada.
  * ==============================================================================
  */
 
-// add_filter('the_content', 'vettryx_seo_auto_image_alt');
-// add_action('wp_head', 'vettryx_seo_inject_schema_markup', 99);
+// 4.1 Injeta Alt Automático nas Imagens do Conteúdo
+add_filter('the_content', 'vettryx_seo_auto_image_alt', 99);
+function vettryx_seo_auto_image_alt($content) {
+    if (is_singular() && in_the_loop() && is_main_query()) {
+        global $post;
+        $title = esc_attr(get_the_title($post->ID));
+        
+        // Magia Negra (Regex) 1: Encontra tags <img> que NÃO possuem o atributo alt e injeta o título
+        $content = preg_replace(
+            '/<img(?![^>]*\balt=["\'](.*?)["\'])(([^>]*)>)/i', 
+            '<img alt="' . $title . '"$3', 
+            $content
+        );
+        
+        // Magia Negra (Regex) 2: Encontra tags <img> que têm o alt, mas ele está vazio (alt="") e injeta o título
+        $content = preg_replace(
+            '/<img([^>]*)\balt=["\']["\']([^>]*)>/i', 
+            '<img$1alt="' . $title . '"$2>', 
+            $content
+        );
+    }
+    return $content;
+}
+
+// 4.2 Gera e Injeta o Schema Markup (JSON-LD) no <head>
+add_action('wp_head', 'vettryx_seo_inject_schema_markup', 99);
+function vettryx_seo_inject_schema_markup() {
+    if (!is_singular()) return;
+
+    global $post;
+    $site_name = get_bloginfo('name');
+    $site_url = home_url();
+    $post_url = get_permalink();
+    $post_title = get_the_title();
+    
+    // Puxa o resumo automatizado que criamos lá na Seção 1 (Fallback em cascata)
+    $description = get_post_meta($post->ID, '_vettryx_meta_description', true);
+    if (empty($description)) {
+        $description = has_excerpt($post->ID) ? wp_strip_all_tags(get_the_excerpt($post->ID)) : wp_trim_words(wp_strip_all_tags(strip_shortcodes($post->post_content)), 25, '...');
+    }
+
+    // Inicializa a estrutura do Schema
+    $schema = [
+        '@context' => 'https://schema.org',
+        '@graph' => []
+    ];
+
+    // 1. Schema da Organização/Site (Sempre presente para criar autoridade de marca)
+    $schema['@graph'][] = [
+        '@type' => 'Organization',
+        '@id' => $site_url . '#organization',
+        'name' => $site_name,
+        'url' => $site_url
+    ];
+
+    // 2. Schema do Artigo/Página
+    $type = is_singular('post') ? 'Article' : 'WebPage'; // Se for post de blog vira Article, se não, WebPage.
+    
+    $article_schema = [
+        '@type' => $type,
+        '@id' => $post_url . '#' . strtolower($type),
+        'isPartOf' => ['@id' => $site_url . '#website'],
+        'headline' => $post_title,
+        'description' => $description,
+        'url' => $post_url,
+        'datePublished' => get_the_date('c', $post->ID),
+        'dateModified' => get_the_modified_date('c', $post->ID),
+        'publisher' => ['@id' => $site_url . '#organization'],
+        'author' => [
+            '@type' => 'Person',
+            'name' => get_the_author_meta('display_name', $post->post_author)
+        ]
+    ];
+
+    // Se tiver imagem destacada, avisa o Google para colocar na miniatura da pesquisa
+    if (has_post_thumbnail($post->ID)) {
+        $image_url = get_the_post_thumbnail_url($post->ID, 'large');
+        $article_schema['image'] = [
+            '@type' => 'ImageObject',
+            'url' => $image_url
+        ];
+    }
+
+    $schema['@graph'][] = $article_schema;
+
+    // Imprime o JSON minificado e limpo no código-fonte
+    echo "\n\n";
+    echo '<script type="application/ld+json">' . wp_json_encode($schema, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . '</script>';
+    echo "\n\n\n";
+}
 
 /**
  * ==============================================================================

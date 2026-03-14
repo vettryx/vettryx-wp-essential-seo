@@ -3,7 +3,7 @@
  * Plugin Name: VETTRYX WP Essential SEO
  * Plugin URI:  https://github.com/vettryx/vettryx-wp-core
  * Description: Módulo para otimização de SEO On-Page, sitemaps e redirecionamentos. Foco em performance e zero bloatware.
- * Version:     1.3.1
+ * Version:     1.4.0
  * Author:      VETTRYX Tech
  * Author URI:  https://vettryx.com.br
  * License:     Proprietária (Uso Comercial Exclusivo)
@@ -652,9 +652,48 @@ function vettryx_seo_inject_schema_markup() {
 
 /**
  * ==============================================================================
- * 4. INDEXAÇÃO INSTANTÂNEA (APIs)
- * Responsável por pingar o Google/Bing ao atualizar conteúdos.
+ * 5. INDEXAÇÃO INSTANTÂNEA (API PUSH)
+ * Responsável por notificar motores de busca ao atualizar conteúdos.
  * ==============================================================================
  */
 
-// add_action('transition_post_status', 'vettryx_seo_instant_indexing', 10, 3);
+add_action('transition_post_status', 'vettryx_seo_instant_indexing', 10, 3);
+function vettryx_seo_instant_indexing($new_status, $old_status, $post) {
+    // 1. Só dispara se o post estiver sendo publicado ou atualizado (deve estar público)
+    if ($new_status !== 'publish') {
+        return;
+    }
+
+    // 2. Só dispara para os tipos de post que o usuário escolheu indexar (Whitelist do Sitemap)
+    $config = get_option('vettryx_seo_sitemap_config', ['included_post_types' => ['post', 'page']]);
+    $allowed_types = isset($config['included_post_types']) ? $config['included_post_types'] : ['post', 'page'];
+    
+    if (!in_array($post->post_type, $allowed_types)) {
+        return;
+    }
+
+    // 3. Monta a URL que precisa ser notificada
+    $post_url = get_permalink($post->ID);
+
+    // 4. API PUSH: Dispara o Ping-O-Matic (Padrão e Bing) silenciosamente
+    // Nota de Engenharia: A API direta do Google Service Account requer JSON keys complexas. 
+    // Para um sistema Zero Bloat, usamos o RPC Ping que ainda é lido massivamente pelo Bing e rastreadores secundários.
+    
+    $ping_urls = [
+        'http://rpc.pingomatic.com/',
+        'http://ping.feedburner.com/',
+    ];
+
+    // O WP HTTP API é assíncrono por padrão se o timeout for curto
+    foreach ($ping_urls as $api_url) {
+        wp_remote_post($api_url, [
+            'timeout' => 2, // Timeout agressivo para não atrasar o salvamento do post para o usuário
+            'blocking' => false, // Dispara e esquece, não espera o Bing responder
+            'body' => [
+                'title' => get_bloginfo('name'),
+                'url' => home_url(),
+                'changesURL' => $post_url
+            ]
+        ]);
+    }
+}

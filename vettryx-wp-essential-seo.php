@@ -3,7 +3,7 @@
  * Plugin Name: VETTRYX WP Essential SEO
  * Plugin URI:  https://github.com/vettryx/vettryx-wp-core
  * Description: Módulo para otimização de SEO On-Page, sitemaps e redirecionamentos. Foco em performance e zero bloatware.
- * Version:     1.2.1
+ * Version:     1.2.2
  * Author:      VETTRYX Tech
  * Author URI:  https://vettryx.com.br
  * License:     Proprietária (Uso Comercial Exclusivo)
@@ -326,18 +326,18 @@ function vettryx_seo_prevent_sitemap_redirect($redirect_url) {
  * ==============================================================================
  */
 
-// 3.1 Cria a tabela no banco de dados na ativação do plugin
-register_activation_hook(__FILE__, 'vettryx_seo_create_redirects_table');
+// 3.1 Auto-Updater: Cria e verifica a tabela no banco de dados silenciosamente
 function vettryx_seo_create_redirects_table() {
     global $wpdb;
     $table_name = $wpdb->prefix . 'vettryx_seo_redirects';
     $charset_collate = $wpdb->get_charset_collate();
 
+    // SQL estrito para o dbDelta (sem comentários, espaçamento exato)
     $sql = "CREATE TABLE $table_name (
         id mediumint(9) NOT NULL AUTO_INCREMENT,
         url_origem varchar(255) NOT NULL,
         url_destino varchar(255) DEFAULT '' NOT NULL,
-        tipo varchar(10) DEFAULT '404' NOT NULL, -- Pode ser '404' ou '301'
+        tipo varchar(10) DEFAULT '404' NOT NULL,
         hits int(11) DEFAULT 0 NOT NULL,
         ultimo_acesso datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
         PRIMARY KEY  (id),
@@ -346,6 +346,19 @@ function vettryx_seo_create_redirects_table() {
 
     require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
     dbDelta($sql);
+}
+
+// Roda a verificação toda vez que o painel admin for carregado
+add_action('admin_init', 'vettryx_seo_check_and_create_table');
+function vettryx_seo_check_and_create_table() {
+    // Flag de controle de versão do banco de dados
+    $db_version = '1.0.0';
+    
+    // Se a versão instalada for diferente da versão do código, força a recriação/atualização da tabela
+    if (get_option('vettryx_seo_redirects_db_version') !== $db_version) {
+        vettryx_seo_create_redirects_table();
+        update_option('vettryx_seo_redirects_db_version', $db_version);
+    }
 }
 
 // 3.2 Intercepta o tráfego (O Guardião)

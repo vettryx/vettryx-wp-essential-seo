@@ -3,7 +3,7 @@
  * Plugin Name: VETTRYX WP Essential SEO
  * Plugin URI:  https://github.com/vettryx/vettryx-wp-core
  * Description: Módulo para otimização de SEO On-Page, sitemaps e redirecionamentos. Foco em performance e zero bloatware.
- * Version:     1.4.1
+ * Version:     1.5.0
  * Author:      VETTRYX Tech
  * Author URI:  https://vettryx.com.br
  * License:     Proprietária (Uso Comercial Exclusivo)
@@ -151,9 +151,10 @@ function vettryx_seo_inject_meta_tags() {
  * ==============================================================================
  */
 
-// 2.1 Adiciona o submenu "SEO Manager"
+// 2.1 Adiciona os submenus do SEO Manager
 add_action('admin_menu', 'vettryx_seo_add_submenu', 99);
 function vettryx_seo_add_submenu() {
+    // Aba de Sitemap
     add_submenu_page(
         'vettryx-core-modules',
         'SEO Manager - VETTRYX Tech',
@@ -162,9 +163,94 @@ function vettryx_seo_add_submenu() {
         'vettryx-seo-manager',
         'vettryx_seo_manager_html'
     );
+
+    // NOVA ABA: Local SEO (Schema)
+    add_submenu_page(
+        'vettryx-core-modules',
+        'Local SEO (Schema) - VETTRYX Tech',
+        'Local SEO (Schema)',
+        'manage_options',
+        'vettryx-seo-local',
+        'vettryx_seo_local_html'
+    );
 }
 
-// 2.2 Desenha a interface do SEO Manager 
+// 2.2 Desenha a interface do Local SEO (Cartão de Visitas do Google)
+function vettryx_seo_local_html() {
+    if (!current_user_can('manage_options')) return;
+
+    // Processa o salvamento do formulário Local SEO
+    if (isset($_POST['vettryx_local_seo_action']) && check_admin_referer('vettryx_local_seo_nonce')) {
+        if (isset($_POST['local_seo']) && is_array($_POST['local_seo'])) {
+            $sanitized_data = array_map('sanitize_text_field', $_POST['local_seo']);
+            update_option('vettryx_seo_local_settings', $sanitized_data);
+            echo '<div class="notice notice-success is-dismissible"><p>Sucesso! Dados do LocalBusiness salvos e injetados no código fonte.</p></div>';
+        }
+    }
+
+    // Puxa os dados salvos ou os valores padrão
+    $local_seo = get_option('vettryx_seo_local_settings', [
+        'type' => 'Organization', 'name' => get_bloginfo('name'), 'phone' => '', 'street' => '', 'city' => '', 'state' => '', 'zip' => ''
+    ]);
+    ?>
+    <div class="wrap">
+        <h1 style="display:flex; align-items:center; gap:10px; margin-bottom: 20px;">
+            <span class="dashicons dashicons-store" style="font-size: 28px; width: 28px; height: 28px;"></span>
+            VETTRYX Local SEO (Schema Markup)
+        </h1>
+        <p>Configure os dados da empresa para o Google gerar "Rich Snippets" (Resultados Ricos) na pesquisa.</p>
+
+        <div style="background: #fff; padding: 20px; border: 1px solid #ccd0d4; max-width: 800px; box-shadow: 0 1px 1px rgba(0,0,0,.04);">
+            <form method="post" action="">
+                <?php wp_nonce_field('vettryx_local_seo_nonce'); ?>
+                <input type="hidden" name="vettryx_local_seo_action" value="save">
+
+                <table class="form-table">
+                    <tr>
+                        <th scope="row"><label for="seo_type">Tipo de Negócio</label></th>
+                        <td>
+                            <select name="local_seo[type]" id="seo_type" class="regular-text">
+                                <option value="Organization" <?php selected($local_seo['type'], 'Organization'); ?>>Organização / Empresa Digital</option>
+                                <option value="LocalBusiness" <?php selected($local_seo['type'], 'LocalBusiness'); ?>>Negócio Local (Loja Física, Clínica, etc)</option>
+                            </select>
+                            <p class="description">Escolha "Negócio Local" se você atende clientes em um endereço físico.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="seo_name">Nome da Empresa</label></th>
+                        <td><input type="text" name="local_seo[name]" id="seo_name" value="<?php echo esc_attr($local_seo['name']); ?>" class="regular-text"></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="seo_phone">Telefone / WhatsApp</label></th>
+                        <td><input type="text" name="local_seo[phone]" id="seo_phone" value="<?php echo esc_attr($local_seo['phone']); ?>" class="regular-text" placeholder="+55 (31) 99999-9999"></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="seo_street">Endereço (Rua, Número)</label></th>
+                        <td><input type="text" name="local_seo[street]" id="seo_street" value="<?php echo esc_attr($local_seo['street']); ?>" class="regular-text"></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="seo_city">Cidade</label></th>
+                        <td><input type="text" name="local_seo[city]" id="seo_city" value="<?php echo esc_attr($local_seo['city']); ?>" class="regular-text"></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="seo_state">Estado (UF)</label></th>
+                        <td><input type="text" name="local_seo[state]" id="seo_state" value="<?php echo esc_attr($local_seo['state']); ?>" class="regular-text" placeholder="Ex: MG"></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="seo_zip">CEP</label></th>
+                        <td><input type="text" name="local_seo[zip]" id="seo_zip" value="<?php echo esc_attr($local_seo['zip']); ?>" class="regular-text"></td>
+                    </tr>
+                </table>
+                <p class="submit">
+                    <button type="submit" class="button button-primary button-large">Atualizar Schema</button>
+                </p>
+            </form>
+        </div>
+    </div>
+    <?php
+}
+
+// 2.3 Desenha a interface do SEO Manager (Sitemap)
 function vettryx_seo_manager_html() {
     if (!current_user_can('manage_options')) return;
 
@@ -275,7 +361,7 @@ function vettryx_seo_manager_html() {
     <?php
 }
 
-// 2.3 Cria o alias DINÂMICO para o sitemap
+// 2.4 Cria o alias DINÂMICO para o sitemap
 add_action('init', 'vettryx_seo_sitemap_alias');
 function vettryx_seo_sitemap_alias() {
     $config = get_option('vettryx_seo_sitemap_config', []);
@@ -286,7 +372,7 @@ function vettryx_seo_sitemap_alias() {
     add_rewrite_rule($regex, 'index.php?sitemap=index', 'top');
 }
 
-// 2.4 Filtros Cirúrgicos do Sitemap Nativo 
+// 2.5 Filtros Cirúrgicos do Sitemap Nativo 
 add_filter('wp_sitemaps_add_provider', 'vettryx_seo_remove_users_sitemap', 10, 2);
 function vettryx_seo_remove_users_sitemap($provider, $name) {
     return ('users' === $name) ? false : $provider;
@@ -310,7 +396,7 @@ function vettryx_seo_filter_sitemap_taxonomies($taxonomies) {
     return $taxonomies;
 }
 
-// 2.5 Impede o WordPress de forçar o redirecionamento para o wp-sitemap.xml padrão
+// 2.6 Impede o WordPress de forçar o redirecionamento para o wp-sitemap.xml padrão
 add_filter('redirect_canonical', 'vettryx_seo_prevent_sitemap_redirect');
 function vettryx_seo_prevent_sitemap_redirect($redirect_url) {
     // Se a página atual for qualquer parte do sitemap, bloqueia o redirecionamento
@@ -621,7 +707,7 @@ function vettryx_seo_auto_image_alt($content) {
     return $content;
 }
 
-// 4.2 Gera e Injeta o Schema Markup (JSON-LD) no <head>
+// 4.2 Gera e Injeta o Schema Markup (JSON-LD) no <head> COM SUPORTE A LOCAL BUSINESS
 add_action('wp_head', 'vettryx_seo_inject_schema_markup', 99);
 function vettryx_seo_inject_schema_markup() {
     if (!is_singular()) return;
@@ -638,22 +724,47 @@ function vettryx_seo_inject_schema_markup() {
         $description = has_excerpt($post->ID) ? wp_strip_all_tags(get_the_excerpt($post->ID)) : wp_trim_words(wp_strip_all_tags(strip_shortcodes($post->post_content)), 25, '...');
     }
 
+    // NOVA LÓGICA: Busca os dados do Local SEO do banco de dados (que preenchemos na tela nova)
+    $local_seo = get_option('vettryx_seo_local_settings', []);
+    $org_type = !empty($local_seo['type']) ? $local_seo['type'] : 'Organization';
+    $org_name = !empty($local_seo['name']) ? $local_seo['name'] : $site_name;
+
     // Inicializa a estrutura do Schema
     $schema = [
         '@context' => 'https://schema.org',
         '@graph' => []
     ];
 
-    // 1. Schema da Organização/Site (Sempre presente para criar autoridade de marca)
-    $schema['@graph'][] = [
-        '@type' => 'Organization',
-        '@id' => $site_url . '#organization',
-        'name' => $site_name,
+    // 1. Schema da Organização/Site (Dinâmico para Empresa ou Negócio Local)
+    $org_schema = [
+        '@type' => $org_type,
+        '@id' => $site_url . '#' . strtolower($org_type),
+        'name' => $org_name,
         'url' => $site_url
     ];
 
+    // Adiciona o telefone se existir
+    if (!empty($local_seo['phone'])) {
+        $org_schema['telephone'] = $local_seo['phone'];
+    }
+
+    // Adiciona o endereço (PostalAddress) se pelo menos a rua ou cidade existirem
+    if (!empty($local_seo['street']) || !empty($local_seo['city'])) {
+        $org_schema['address'] = [
+            '@type' => 'PostalAddress',
+            'streetAddress' => isset($local_seo['street']) ? $local_seo['street'] : '',
+            'addressLocality' => isset($local_seo['city']) ? $local_seo['city'] : '',
+            'addressRegion' => isset($local_seo['state']) ? $local_seo['state'] : '',
+            'postalCode' => isset($local_seo['zip']) ? $local_seo['zip'] : '',
+            'addressCountry' => 'BR'
+        ];
+    }
+    
+    // Insere o schema da empresa no JSON final
+    $schema['@graph'][] = $org_schema;
+
     // 2. Schema do Artigo/Página
-    $type = is_singular('post') ? 'Article' : 'WebPage'; // Se for post de blog vira Article, se não, WebPage.
+    $type = is_singular('post') ? 'Article' : 'WebPage'; 
     
     $article_schema = [
         '@type' => $type,
@@ -664,7 +775,7 @@ function vettryx_seo_inject_schema_markup() {
         'url' => $post_url,
         'datePublished' => get_the_date('c', $post->ID),
         'dateModified' => get_the_modified_date('c', $post->ID),
-        'publisher' => ['@id' => $site_url . '#organization'],
+        'publisher' => ['@id' => $site_url . '#' . strtolower($org_type)], // Associa quem publicou com a entidade correta
         'author' => [
             '@type' => 'Person',
             'name' => get_the_author_meta('display_name', $post->post_author)
@@ -714,9 +825,6 @@ function vettryx_seo_instant_indexing($new_status, $old_status, $post) {
     $post_url = get_permalink($post->ID);
 
     // 4. API PUSH: Dispara o Ping-O-Matic (Padrão e Bing) silenciosamente
-    // Nota de Engenharia: A API direta do Google Service Account requer JSON keys complexas. 
-    // Para um sistema Zero Bloat, usamos o RPC Ping que ainda é lido massivamente pelo Bing e rastreadores secundários.
-    
     $ping_urls = [
         'http://rpc.pingomatic.com/',
         'http://ping.feedburner.com/',
@@ -725,8 +833,8 @@ function vettryx_seo_instant_indexing($new_status, $old_status, $post) {
     // O WP HTTP API é assíncrono por padrão se o timeout for curto
     foreach ($ping_urls as $api_url) {
         wp_remote_post($api_url, [
-            'timeout' => 2, // Timeout agressivo para não atrasar o salvamento do post para o usuário
-            'blocking' => false, // Dispara e esquece, não espera o Bing responder
+            'timeout' => 2, 
+            'blocking' => false, 
             'body' => [
                 'title' => get_bloginfo('name'),
                 'url' => home_url(),
